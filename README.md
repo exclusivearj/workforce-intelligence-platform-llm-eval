@@ -1,4 +1,6 @@
-# llm-eval — LLM evaluation data infrastructure
+![workforce-intelligence-platform-llm-eval banner](assets/02-llm-eval-banner.png)
+
+# workforce-intelligence-platform-llm-eval — LLM evaluation data infrastructure
 
 Part 2 of 4 in the [workforce-intelligence-platform](../README.md).
 
