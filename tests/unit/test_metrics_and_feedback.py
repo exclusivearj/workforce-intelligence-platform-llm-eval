@@ -74,7 +74,7 @@ def test_get_feedback_summary():
 def test_apply_masking_views_executes():
     conn = FakeConn()
     apply_masking_views(conn)
-    assert len(conn.cursor().executed) == 2
+    assert len(conn.cursor().executed) == 1
     assert conn.committed
 
 

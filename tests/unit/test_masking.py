@@ -23,7 +23,7 @@ SAFE_COLUMNS = [
 def test_verify_masking_passes_when_safe(monkeypatch):
     monkeypatch.setattr(views_module, "_view_columns", lambda conn, view: list(SAFE_COLUMNS))
     results = verify_masking(conn=object())
-    assert len(results) == 2
+    assert len(results) == 1
     assert all(r.ok for r in results)
 
 

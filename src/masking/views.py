@@ -26,20 +26,10 @@ SELECT
 FROM analytics.dim_employees;
 """
 
-ANALYST_SAFE_VIEW_SQL = """
-CREATE OR REPLACE VIEW analytics.v_employees_safe AS
-SELECT
-    employee_id,
-    department,
-    job_title,
-    level,
-    hire_date,
-    is_active,
-    employment_type,
-    location,
-    MD5(COALESCE(manager_id::text, '')) AS manager_id_hashed
-FROM analytics.dim_employees;
-"""
+# NOTE: analytics.v_employees_safe is owned by the 3-governance module, which generates it
+# from policies/data_classification.yml (it masks confidential PII such as full_name/email
+# rather than dropping it). This module owns only the LLM-context view above. Defining
+# v_employees_safe here too caused a last-writer-wins conflict on the shared database.
 
 
 class MaskingViolation(Exception):
@@ -54,10 +44,9 @@ class MaskingVerificationResult:
 
 
 def apply_masking_views(conn) -> None:
-    """(Re)create the LLM-safe and analyst-safe masking views. Idempotent."""
+    """(Re)create the LLM-safe employee-context view. Idempotent."""
     with conn.cursor() as cur:
         cur.execute(SAFE_EMPLOYEE_CONTEXT_SQL)
-        cur.execute(ANALYST_SAFE_VIEW_SQL)
     conn.commit()
 
 
@@ -81,7 +70,7 @@ def verify_masking(conn) -> list[MaskingVerificationResult]:
     Raises MaskingViolation on the first leak so callers fail loudly.
     """
     results: list[MaskingVerificationResult] = []
-    for view in ("llm.safe_employee_context", "analytics.v_employees_safe"):
+    for view in ("llm.safe_employee_context",):
         cols = set(_view_columns(conn, view))
         leaked = cols & FORBIDDEN_COLUMNS
         if leaked:
