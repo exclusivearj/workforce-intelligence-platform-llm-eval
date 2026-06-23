@@ -45,7 +45,7 @@ embedding store, eval harness, PII masking views, feedback loop, and cost tracki
 
 | Concern | Technology |
 |---|---|
-| Vector DB | pgvector 0.7 on Postgres 16 |
+| Vector DB | pgvector on Postgres 16 (`pgvector/pgvector:pg16`) |
 | Embeddings | sentence-transformers (local) / OpenAI text-embedding-3-small |
 | Eval framework | RAGAS 0.1.9 |
 | Data validation | Pydantic v2 |
@@ -57,14 +57,53 @@ embedding store, eval harness, PII masking views, feedback loop, and cost tracki
 ## Setup
 
 ### Prerequisites
-- `ingestion/` fully set up and `analytics.dim_employees` populated
+
+The shared Postgres (with pgvector) and the `analytics.dim_employees` table must exist
+first — the masking view reads from it. From the repo root:
 
 ```bash
-cd llm-eval
-pip install -e ".[dev]"
-make setup         # enables pgvector, creates llm schema, generates Q&A pairs, embeds
-make eval          # runs RAGAS eval once and writes results
+make infra-up         # Postgres (pgvector/pgvector:pg16) + Trino + Airflow
+make ingestion-setup  # seed synthetic HR data
+make ingestion-dbt    # build analytics.dim_employees
 ```
+
+The `llm` schema and its tables are created on first DB init by
+`docker/init_llm_schema.sql` (mounted as `02_llm.sql` in the shared compose).
+
+### This module
+
+```bash
+cd 2-llm-eval
+make setup         # install deps → create masking views → embed safe context into pgvector
+make eval          # generate Q&A pairs → run RAGAS eval → write results + cost log
+```
+
+`make setup` runs `src.pipeline.setup`: it applies the PII masking views, verifies they
+expose no forbidden columns, then embeds every `safe_employee_context` row into
+`llm.embeddings`. The default `local` embedding backend runs fully offline.
+
+> **`make eval` needs an LLM judge.** RAGAS computes its metrics with an LLM (and embedding)
+> judge — by default OpenAI — so `make eval` requires `OPENAI_API_KEY` to be set, or a custom
+> `evaluator` injected into `run_eval()`. The embedding and similarity-search paths
+> (`make setup` / `make embed`) need no API key.
+
+### Make targets
+
+| Target | What it does |
+|---|---|
+| `make install` | Install the package + dev dependencies |
+| `make setup` | Install, apply masking views, embed safe context |
+| `make embed` | Re-embed `safe_employee_context` into pgvector |
+| `make eval` | Run the RAGAS eval (needs `OPENAI_API_KEY`) |
+| `make test-unit` | Unit tests + coverage (no infra required) |
+| `make test-integration` | Integration tests (requires Docker / testcontainers) |
+| `make test` | Unit + integration tests |
+| `make lint` | Ruff lint over `src/` + `tests/` |
+| `make clean` | Remove caches + coverage artifacts |
+
+Unit tests mock the heavy ML/DB dependencies and run offline; the integration tests spin up
+a real `pgvector/pgvector:pg16` container via testcontainers (Docker required), and the
+local-encoder integration test is skipped unless `sentence-transformers` is installed.
 
 ---
 
@@ -90,6 +129,29 @@ human-in-the-loop feedback loop that can drive future fine-tuning or prompt impr
 | `context_recall` | Did retrieval find all necessary information? |
 
 Target thresholds: all metrics ≥ 0.70. Airflow alerts fire below this threshold.
+
+---
+
+## Cost tracking
+
+Every embedding and eval run writes a row to `llm.cost_log` (the local backend records
+`cost_usd = 0`, so the offline default is free to run while still producing an audit trail).
+Spend by run type over the last 30 days:
+
+```sql
+SELECT run_type,
+       COUNT(*)              AS runs,
+       SUM(embedding_count)  AS embeddings,
+       SUM(input_tokens)     AS input_tokens,
+       SUM(cost_usd)         AS total_cost_usd
+FROM llm.cost_log
+WHERE run_at > NOW() - INTERVAL '30 days'
+GROUP BY run_type
+ORDER BY total_cost_usd DESC;
+```
+
+Switching to `EMBEDDING_BACKEND=openai` (or running `make eval` against OpenAI) starts
+populating real token counts and `cost_usd`, so the same query becomes a live cost dashboard.
 
 ---
 
