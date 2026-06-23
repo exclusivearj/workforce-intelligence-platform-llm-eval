@@ -1,7 +1,10 @@
 """Run a full RAGAS evaluation and persist results + cost.
 
 Run with: ``python -m src.pipeline.eval``.
-Uses the local retrieval-augmented baseline (no OpenAI required).
+
+Retrieval and generation use the local baseline (no OpenAI needed), but RAGAS scores
+its metrics with an LLM judge — by default OpenAI — so this requires ``OPENAI_API_KEY``
+to be set, or a custom ``evaluator`` injected into ``run_eval``.
 """
 
 from __future__ import annotations
