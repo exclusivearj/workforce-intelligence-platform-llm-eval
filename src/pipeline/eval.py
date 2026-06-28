@@ -2,9 +2,11 @@
 
 Run with: ``python -m src.pipeline.eval``.
 
-Retrieval and generation use the local baseline (no OpenAI needed), but RAGAS scores
-its metrics with an LLM judge — by default OpenAI — so this requires ``OPENAI_API_KEY``
-to be set, or a custom ``evaluator`` injected into ``run_eval``.
+Retrieval and generation use the local baseline, and RAGAS metric embeddings run on the
+local sentence-transformers model — so nothing here calls OpenAI. RAGAS still scores its
+metrics with an LLM judge: that judge is Claude (``langchain-anthropic``), so this requires
+``ANTHROPIC_API_KEY`` to be set. The judge model defaults to ``claude-opus-4-8`` and is
+configurable via ``RAGAS_LLM_MODEL`` (e.g. ``claude-haiku-4-5`` to cut cost).
 """
 
 from __future__ import annotations

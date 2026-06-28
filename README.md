@@ -48,6 +48,7 @@ embedding store, eval harness, PII masking views, feedback loop, and cost tracki
 | Vector DB | pgvector on Postgres 16 (`pgvector/pgvector:pg16`) |
 | Embeddings | sentence-transformers (local) / OpenAI text-embedding-3-small |
 | Eval framework | RAGAS 0.1.9 |
+| Eval LLM judge | Claude via `langchain-anthropic` (`claude-opus-4-8` default) |
 | Data validation | Pydantic v2 |
 | Orchestration | Apache Airflow 2.9 |
 | Testing | pytest + testcontainers |
@@ -82,10 +83,13 @@ make eval          # generate Q&A pairs → run RAGAS eval → write results + c
 expose no forbidden columns, then embeds every `safe_employee_context` row into
 `llm.embeddings`. The default `local` embedding backend runs fully offline.
 
-> **`make eval` needs an LLM judge.** RAGAS computes its metrics with an LLM (and embedding)
-> judge — by default OpenAI — so `make eval` requires `OPENAI_API_KEY` to be set, or a custom
-> `evaluator` injected into `run_eval()`. The embedding and similarity-search paths
-> (`make setup` / `make embed`) need no API key.
+> **`make eval` uses a Claude LLM judge.** RAGAS scores its metrics with an LLM judge; this
+> module uses **Claude** via `langchain-anthropic`, with RAGAS's metric embeddings running on
+> the local sentence-transformers model — so the eval path never touches OpenAI. `make eval`
+> therefore requires `ANTHROPIC_API_KEY`. The judge model defaults to `claude-opus-4-8` and is
+> configurable with `RAGAS_LLM_MODEL` (e.g. `RAGAS_LLM_MODEL=claude-haiku-4-5` to cut cost on
+> the 200-question dataset). The embedding and similarity-search paths (`make setup` /
+> `make embed`) need no API key.
 
 ### Make targets
 
@@ -94,7 +98,7 @@ expose no forbidden columns, then embeds every `safe_employee_context` row into
 | `make install` | Install the package + dev dependencies |
 | `make setup` | Install, apply masking views, embed safe context |
 | `make embed` | Re-embed `safe_employee_context` into pgvector |
-| `make eval` | Run the RAGAS eval (needs `OPENAI_API_KEY`) |
+| `make eval` | Run the RAGAS eval — Claude judge (needs `ANTHROPIC_API_KEY`) |
 | `make test-unit` | Unit tests + coverage (no infra required) |
 | `make test-integration` | Integration tests (requires Docker / testcontainers) |
 | `make test` | Unit + integration tests |
@@ -150,8 +154,10 @@ GROUP BY run_type
 ORDER BY total_cost_usd DESC;
 ```
 
-Switching to `EMBEDDING_BACKEND=openai` (or running `make eval` against OpenAI) starts
-populating real token counts and `cost_usd`, so the same query becomes a live cost dashboard.
+`make eval` calls the Claude judge, which is a metered API cost. Token usage isn't yet wired
+into `llm.cost_log` (eval rows record `cost_usd = 0`), so track judge spend in the Anthropic
+console for now, or set `RAGAS_LLM_MODEL=claude-haiku-4-5` to keep the 200-question run cheap.
+Switching `EMBEDDING_BACKEND=openai` likewise starts populating real embedding token counts.
 
 ---
 
@@ -162,9 +168,19 @@ costs nothing, has no API dependency, and produces 384-dimensional embeddings th
 in a pgvector ivfflat index. OpenAI is available as an opt-in via `EMBEDDING_BACKEND=openai`
 for production scenarios where quality matters more than cost.
 
-**RAGAS over custom eval.** RAGAS provides standardised, reproducible metrics with published
+**RAGAS over custom eval.** RAGAS (Retrieval-Augmented Generation Assessment) is an open-source
+framework for evaluating RAG pipelines, using an LLM judge to score generated answers against the
+retrieved context on metrics like faithfulness and answer relevancy. It provides standardised, reproducible metrics with published
 benchmarks. Rolling your own eval framework is a maintenance liability — RAGAS scores are
 comparable across model versions and meaningful to non-engineers reviewing the eval dashboard.
+
+**Claude as the RAGAS judge, local embeddings underneath.** RAGAS needs both an LLM (to grade
+faithfulness/relevancy) and an embedding model (for the similarity-based metrics). Out of the
+box RAGAS reaches for OpenAI for both. We instead inject a **Claude** judge via
+`langchain-anthropic` and keep the embedding side on the local `all-MiniLM-L6-v2` model, so the
+eval depends on a single Anthropic key and no OpenAI account. The judge model is configurable
+(`RAGAS_LLM_MODEL`), and because Claude Opus 4.8/4.7 reject sampling parameters that RAGAS
+forwards by default, the harness wraps the model to drop them — so any Claude model works.
 
 **Feedback separate from eval_results.** Eval results measure model quality against ground truth.
 Feedback measures human preference. These are different signals and should be queryable

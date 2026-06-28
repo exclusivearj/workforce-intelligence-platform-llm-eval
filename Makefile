@@ -12,7 +12,7 @@ help:
 	@echo "  make install           Install package + dev dependencies"
 	@echo "  make setup             Install, apply masking views, embed safe context"
 	@echo "  make embed             Re-embed safe_employee_context into pgvector"
-	@echo "  make eval              Run RAGAS eval (needs OPENAI_API_KEY — see README)"
+	@echo "  make eval              Run RAGAS eval (Claude judge; needs ANTHROPIC_API_KEY)"
 	@echo ""
 	@echo "  make test              Unit + integration tests"
 	@echo "  make test-unit         Unit tests + coverage (no infra required)"
@@ -33,8 +33,8 @@ embed:
 	python -c "from src.embeddings.pipeline import run_embedding_pipeline; print(run_embedding_pipeline())"
 
 eval:
-	@echo "Running RAGAS eval — metric scoring uses an LLM judge (OpenAI by default)."
-	@echo "Set OPENAI_API_KEY, or inject a custom evaluator into run_eval(). See README."
+	@echo "Running RAGAS eval — metric scoring uses a Claude LLM judge."
+	@echo "Requires ANTHROPIC_API_KEY; judge model = RAGAS_LLM_MODEL (default claude-opus-4-8)."
 	python -m src.pipeline.eval
 
 test-unit:

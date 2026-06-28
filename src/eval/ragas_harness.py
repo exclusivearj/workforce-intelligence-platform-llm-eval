@@ -7,6 +7,7 @@ lightweight environments; tests exercise the assembly logic with a fake evaluato
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -73,6 +74,11 @@ def run_eval(
 
     scores = {m: float(result.get(m, 0.0)) for m in METRIC_NAMES if m in result}
     row_scores = result.get("_rows", [])
+    # RAGAS returns per-row scores in dataset order (same order as qa_pairs); backfill
+    # question_id so metrics_writer can link each row to its ground-truth pair.
+    for i, row in enumerate(row_scores):
+        if not row.get("question_id") and i < len(qa_pairs):
+            row["question_id"] = qa_pairs[i].question_id
     return EvalRun(
         run_id=str(uuid.uuid4()),
         scores=scores,
@@ -81,7 +87,61 @@ def run_eval(
     )
 
 
-def _ragas_evaluator(data: dict) -> dict:  # pragma: no cover - requires heavy deps
+def _build_claude_judge():  # pragma: no cover - requires langchain-anthropic + API key
+    """Return a RAGAS LLM backed by Claude.
+
+    RAGAS scores its metrics with an LLM judge. We use Anthropic's Claude through the
+    ``langchain-anthropic`` integration (RAGAS 0.1.x is built on LangChain, so this is
+    the idiomatic way to plug in a non-OpenAI judge). The model is configurable via
+    ``RAGAS_LLM_MODEL`` and defaults to ``claude-opus-4-8``.
+
+    Claude Opus 4.8/4.7 reject sampling parameters (``temperature``/``top_p``/``top_k``)
+    with a 400, but RAGAS forwards a ``temperature`` on every call. We therefore wrap the
+    model in a RAGAS LLM that never passes sampling parameters, so the judge works on any
+    Claude model.
+    """
+    from langchain_anthropic import ChatAnthropic
+    from ragas.llms import LangchainLLMWrapper
+
+    chat = ChatAnthropic(
+        model=os.getenv("RAGAS_LLM_MODEL", "claude-opus-4-8"),
+        max_tokens=int(os.getenv("RAGAS_LLM_MAX_TOKENS", "1024")),
+    )
+
+    class _NoSamplingClaude(LangchainLLMWrapper):
+        def generate_text(self, prompt, n=1, temperature=None, stop=None, callbacks=None):
+            return self.langchain_llm.generate_prompt(
+                [prompt], stop=stop, callbacks=callbacks or []
+            )
+
+        async def agenerate_text(
+            self, prompt, n=1, temperature=None, stop=None, callbacks=None
+        ):
+            return await self.langchain_llm.agenerate_prompt(
+                [prompt], stop=stop, callbacks=callbacks or []
+            )
+
+    return _NoSamplingClaude(chat)
+
+
+def _build_local_embeddings():  # pragma: no cover - requires sentence-transformers
+    """Local sentence-transformers embeddings for RAGAS — keeps the eval fully offline
+    on the embeddings side so no OpenAI key is ever required."""
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+
+    model = os.getenv("RAGAS_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    return LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(model_name=model))
+
+
+def _maybe_float(value) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ragas_evaluator(data: dict) -> dict:  # pragma: no cover - requires heavy deps + API key
     from datasets import Dataset
     from ragas import evaluate
     from ragas.metrics import (
@@ -95,5 +155,29 @@ def _ragas_evaluator(data: dict) -> dict:  # pragma: no cover - requires heavy d
     result = evaluate(
         dataset,
         metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+        llm=_build_claude_judge(),
+        embeddings=_build_local_embeddings(),
     )
-    return dict(result)
+
+    scores: dict = {}
+    for metric, value in dict(result).items():
+        as_float = _maybe_float(value)
+        if metric in METRIC_NAMES and as_float is not None:
+            scores[metric] = as_float
+
+    rows: list[dict] = []
+    try:
+        records = result.to_pandas().to_dict(orient="records")
+    except Exception:  # to_pandas shape varies across ragas versions; means still returned
+        records = []
+    for rec in records:
+        rows.append(
+            {
+                "question": rec.get("question", ""),
+                "answer": rec.get("answer", ""),
+                "contexts": list(rec.get("contexts", []) or []),
+                **{m: _maybe_float(rec.get(m)) for m in METRIC_NAMES},
+            }
+        )
+    scores["_rows"] = rows
+    return scores
