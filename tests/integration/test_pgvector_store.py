@@ -5,9 +5,28 @@ Run with: ``pytest tests/integration/ -m integration``
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytestmark = pytest.mark.integration
+
+
+def _connect_with_retry(psycopg2, url: str, attempts: int = 30, delay: float = 0.5):
+    """Connect with a short backoff.
+
+    testcontainers only waits until Postgres is ready *inside* the container; on
+    Docker Desktop (macOS/Windows) the published host port can briefly refuse
+    connections after that. Retrying the host connection closes that race.
+    """
+    last_exc: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return psycopg2.connect(url)
+        except psycopg2.OperationalError as exc:  # host port not forwarded yet
+            last_exc = exc
+            time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 _DDL = """
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -34,7 +53,9 @@ def pg_conn():
     testcontainers = pytest.importorskip("testcontainers.postgres")
 
     with testcontainers.PostgresContainer("pgvector/pgvector:pg16") as pg:
-        conn = psycopg2.connect(pg.get_connection_url().replace("+psycopg2", ""))
+        conn = _connect_with_retry(
+            psycopg2, pg.get_connection_url().replace("+psycopg2", "")
+        )
         with conn.cursor() as cur:
             cur.execute(_DDL)
         conn.commit()

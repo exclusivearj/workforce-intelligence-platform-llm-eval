@@ -100,6 +100,13 @@ def _build_claude_judge():  # pragma: no cover - requires langchain-anthropic + 
     model in a RAGAS LLM that never passes sampling parameters, so the judge works on any
     Claude model.
     """
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set — the RAGAS eval judge requires a Claude API key. "
+            "Set it in the environment or the repo-root .env, then re-run. "
+            "(make setup / make embed do not need a key.)"
+        )
+
     from langchain_anthropic import ChatAnthropic
     from ragas.llms import LangchainLLMWrapper
 

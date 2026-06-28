@@ -104,10 +104,19 @@ expose no forbidden columns, then embeds every `safe_employee_context` row into
 | `make test` | Unit + integration tests |
 | `make lint` | Ruff lint over `src/` + `tests/` |
 | `make clean` | Remove caches + coverage artifacts |
+| `make teardown` | Drop masking views + truncate `llm` tables, then `infra-down` |
 
-Unit tests mock the heavy ML/DB dependencies and run offline; the integration tests spin up
-a real `pgvector/pgvector:pg16` container via testcontainers (Docker required), and the
-local-encoder integration test is skipped unless `sentence-transformers` is installed.
+The `setup`, `embed`, `eval`, and `teardown` targets source the repo-root `../.env` (Postgres
+creds + `ANTHROPIC_API_KEY`) automatically, so you don't have to export it; the test targets
+stay hermetic and ignore it. Unit tests mock the heavy ML/DB dependencies and run offline; the
+integration tests spin up a real `pgvector/pgvector:pg16` container via testcontainers (Docker
+required), and the local-encoder integration test is skipped unless `sentence-transformers` is
+installed.
+
+`make teardown` is the inverse of `make setup`: it drops the PII masking views and truncates the
+`llm` tables (keeping the tables so a later `make setup` rebuilds cleanly), clears caches, then
+shuts the shared Docker stack down via the repo-root `infra-down` (volumes preserved — use
+repo-root `make infra-reset` to also wipe them). DB cleanup is skipped if Postgres is already down.
 
 ---
 
