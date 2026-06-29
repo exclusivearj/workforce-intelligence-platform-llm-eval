@@ -1,6 +1,6 @@
 ![workforce-intelligence-platform-llm-eval banner](assets/02-llm-eval-banner.png)
 
-# workforce-intelligence-platform-llm-eval — LLM evaluation data infrastructure
+# workforce-intelligence-platform-llm-eval — safe, evaluated LLM infrastructure for People Analytics
 
 Part 2 of 4 in the [workforce-intelligence-platform](../README.md).
 
@@ -84,6 +84,47 @@ a measurable change, not a leap of faith.
                   ▼
          Airflow DAGs: embedding_refresh (triggered) + nightly_eval (2am)
 ```
+
+---
+
+## ⭐ Evaluating the RAG pipeline — `make eval`
+
+This module powers a **RAG pipeline** (Retrieval-Augmented Generation). Rather than letting an
+LLM answer HR questions from its own training memory, the question is first used to *retrieve* the
+relevant (masked) employee records, and the model then answers **grounded in that retrieved
+context**. Grounding is what keeps answers specific and current — but it does **not** make them
+automatically correct.
+
+**That's why running an evaluation isn't optional here — it's the point of this module.** A RAG
+pipeline can fail quietly in two ways: retrieval can pull the *wrong* records, or the model can
+*hallucinate* an answer the context doesn't actually support. Neither is visible from eyeballing a
+couple of demo questions. Before anyone trusts these answers for a headcount or attrition
+decision, you need an **objective, repeatable score** — and a way to keep checking it as models
+and data change.
+
+**`make eval` is that check, and it's the heart of this module.** It runs the pipeline against
+~200 questions that have known-correct answers, has a **Claude** model act as an impartial judge,
+and grades the results on four quality metrics, each gated at **≥ 0.70**:
+
+- *Did the answer stick to the retrieved facts, or make something up?* — **faithfulness**
+- *Did it actually answer the question asked?* — **answer_relevancy**
+- *Did retrieval surface the right context, and all of it?* — **context_precision / context_recall**
+
+The per-question scores land in `llm.eval_results` and a cost row in `llm.cost_log`. Crucially, the
+**nightly Airflow DAG runs this same eval at 2am** and alerts if any metric drops below the gate —
+so a regression from a model upgrade or a data change is caught by a pipeline, not by a user
+getting a wrong answer. That scheduled gate is what makes this a quality *SLA*, not a one-time
+spot check.
+
+```bash
+# Needs ANTHROPIC_API_KEY (in ../.env or 2-llm-eval/.env).
+# Claude Haiku keeps the run cheap:
+RAGAS_LLM_MODEL=claude-haiku-4-5 make eval
+```
+
+A representative run scored faithfulness **0.97**, answer_relevancy **0.92**, context_precision
+**0.77**, context_recall **0.90** — all above the gate. See [Eval metrics](#eval-metrics) for the
+full metric definitions and [Cost tracking](#cost-tracking) for the spend audit trail.
 
 ---
 
