@@ -9,6 +9,52 @@ embedding store, eval harness, PII masking views, feedback loop, and cost tracki
 
 ---
 
+## What this part accomplishes
+
+Everyone wants to put a chatbot in front of their HR data — *"how many L5+ engineers
+do we have in Dublin, and how does that compare to last quarter?"* — answered in plain
+English instead of a SQL query. The hard part isn't wiring up an LLM. It's making that
+answer **safe to expose** and **trustworthy enough to act on**. This module builds the
+data infrastructure that has to exist *before* any such feature ships:
+
+- a **vector store** (`pgvector`) so the model can retrieve the right employee context for a question;
+- a **PII-masking layer** so the model only ever sees data it's allowed to see;
+- a **reproducible eval harness** (RAGAS) that scores answer quality against a ground-truth dataset, on a schedule, with alerting;
+- a **cost log** and a **human feedback loop** so spend and quality stay observable over time.
+
+In short: it treats *"can we trust this AI, and is it safe?"* as a data-engineering
+problem — tables, tests, thresholds, and schedules — rather than a one-off prompt.
+
+### Why it matters
+
+HR data is among the most sensitive data a company holds (salary, performance ratings,
+reporting chains), and LLMs hallucinate confidently. Those two facts make a naïve
+"point an LLM at the warehouse" approach a liability:
+
+- **Privacy.** Feeding raw HR rows into an embedding or completion pipeline leaks compensation and performance data into prompts, logs, and third-party APIs. The `llm.safe_employee_context` view is the single approved context source — it strips `salary`, `performance_rating`, and raw `manager_id` *before* data reaches any model. This is least privilege applied to AI: the model sees only what it needs to answer the question.
+- **Trust.** An HR leader making a headcount or attrition decision on a plausible-but-wrong answer is a real harm. The RAGAS harness measures faithfulness, relevancy, and retrieval quality against 200 known-answer questions and gates them at a ≥ 0.70 threshold. The nightly Airflow DAG re-runs that eval at 2am and alerts on regressions — so quality drift from a model upgrade or a data change is caught by a pipeline, not by a user getting a bad answer.
+
+This is the difference between an impressive demo and something a People Analytics team
+would actually let HR business partners use.
+
+### Use case, end to end
+
+1. An HR partner asks a natural-language workforce question in the dashboard.
+2. The question is embedded and used to retrieve the most relevant rows from `llm.embeddings` — which, by construction, only ever contains **masked, salary-free** context.
+3. An LLM composes an answer grounded in that retrieved context.
+4. The nightly eval has *already* proven, on 200 ground-truth questions, that this retrieval-and-answer pipeline scores above threshold — so the answer ships with a measured quality bar behind it, not a hope.
+5. A thumbs-up/down on the answer lands in `llm.feedback`, building a human-in-the-loop signal for future prompt or model improvement.
+
+### Impact
+
+This is the layer that lets the downstream [dashboard](../4-dashboard/) — and any future
+conversational HR feature — ship AI with **guardrails, a quality SLA, and a cost audit
+trail** instead of an unmeasured black box. The eval scores are standardised (RAGAS) and
+comparable across model versions, so swapping or upgrading the judge or embedding model is
+a measurable change, not a leap of faith.
+
+---
+
 ## Architecture
 
 ```
@@ -163,10 +209,12 @@ GROUP BY run_type
 ORDER BY total_cost_usd DESC;
 ```
 
-`make eval` calls the Claude judge, which is a metered API cost. Token usage isn't yet wired
-into `llm.cost_log` (eval rows record `cost_usd = 0`), so track judge spend in the Anthropic
-console for now, or set `RAGAS_LLM_MODEL=claude-haiku-4-5` to keep the 200-question run cheap.
-Switching `EMBEDDING_BACKEND=openai` likewise starts populating real embedding token counts.
+`make eval` calls the Claude judge, a metered API cost. Eval rows in `llm.eval_results` and
+`llm.cost_log` record the **judge model** (`RAGAS_LLM_MODEL`, e.g. `claude-haiku-4-5`) so spend
+is attributable per model — but token counts aren't wired yet (eval rows log `cost_usd = 0`),
+so track actual spend in the Anthropic console, and set `RAGAS_LLM_MODEL=claude-haiku-4-5` to
+keep the 200-question run cheap. Switching `EMBEDDING_BACKEND=openai` likewise starts populating
+real embedding token counts.
 
 ---
 

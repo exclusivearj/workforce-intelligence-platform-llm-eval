@@ -17,6 +17,15 @@ from src.eval.qa_generator import QAPair
 
 METRIC_NAMES = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
 
+# RAGAS judge (Claude) model — configurable via RAGAS_LLM_MODEL. Recorded on the EvalRun
+# so llm.eval_results / llm.cost_log attribute the judge model that produced the scores,
+# not the local embedding model.
+DEFAULT_JUDGE_MODEL = "claude-opus-4-8"
+
+
+def _judge_model_name() -> str:
+    return os.getenv("RAGAS_LLM_MODEL", DEFAULT_JUDGE_MODEL)
+
 
 @dataclass
 class EvalRun:
@@ -79,6 +88,8 @@ def run_eval(
     for i, row in enumerate(row_scores):
         if not row.get("question_id") and i < len(qa_pairs):
             row["question_id"] = qa_pairs[i].question_id
+    # The real evaluator reports the judge model it used; fall back to the param otherwise.
+    model_name = result.get("_model_name", model_name)
     return EvalRun(
         run_id=str(uuid.uuid4()),
         scores=scores,
@@ -111,7 +122,7 @@ def _build_claude_judge():  # pragma: no cover - requires langchain-anthropic + 
     from ragas.llms import LangchainLLMWrapper
 
     chat = ChatAnthropic(
-        model=os.getenv("RAGAS_LLM_MODEL", "claude-opus-4-8"),
+        model=_judge_model_name(),
         max_tokens=int(os.getenv("RAGAS_LLM_MAX_TOKENS", "1024")),
     )
 
@@ -134,7 +145,10 @@ def _build_claude_judge():  # pragma: no cover - requires langchain-anthropic + 
 def _build_local_embeddings():  # pragma: no cover - requires sentence-transformers
     """Local sentence-transformers embeddings for RAGAS — keeps the eval fully offline
     on the embeddings side so no OpenAI key is ever required."""
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+    try:  # the dedicated package is the non-deprecated home for HuggingFaceEmbeddings
+        from langchain_huggingface import HuggingFaceEmbeddings
+    except ImportError:  # fall back to the (deprecated) community import if not installed
+        from langchain_community.embeddings import HuggingFaceEmbeddings
     from ragas.embeddings import LangchainEmbeddingsWrapper
 
     model = os.getenv("RAGAS_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
@@ -187,4 +201,5 @@ def _ragas_evaluator(data: dict) -> dict:  # pragma: no cover - requires heavy d
             }
         )
     scores["_rows"] = rows
+    scores["_model_name"] = _judge_model_name()
     return scores

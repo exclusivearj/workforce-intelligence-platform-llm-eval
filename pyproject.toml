@@ -31,6 +31,10 @@ dependencies = [
     "langchain-community>=0.2,<0.3",
     "langchain-openai>=0.1,<0.2",
     "langchain-anthropic>=0.1.15,<0.2",
+    # Non-deprecated home for HuggingFaceEmbeddings (RAGAS metric embeddings); 0.0.x is the
+    # langchain-core 0.2-compatible line (0.1+ requires core 0.3). Falls back to the
+    # community import in src/eval/ragas_harness.py if absent.
+    "langchain-huggingface>=0.0.3,<0.1",
 ]
 
 [project.optional-dependencies]

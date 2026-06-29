@@ -60,3 +60,22 @@ def test_build_claude_judge_requires_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
         ragas_harness._build_claude_judge()
+
+
+def test_judge_model_name_honors_env(monkeypatch):
+    monkeypatch.setenv("RAGAS_LLM_MODEL", "claude-haiku-4-5")
+    assert ragas_harness._judge_model_name() == "claude-haiku-4-5"
+    monkeypatch.delenv("RAGAS_LLM_MODEL", raising=False)
+    assert ragas_harness._judge_model_name() == ragas_harness.DEFAULT_JUDGE_MODEL
+
+
+def test_run_eval_records_judge_model(sample_employees):
+    # The evaluator reports the judge model it used → EvalRun.model_name reflects it
+    # (so eval_results / cost_log attribute the Claude judge, not the embedding model).
+    pairs = generate_qa_pairs(sample_employees)[:2]
+
+    def fake_evaluator(data: dict) -> dict:
+        return {m: 0.8 for m in METRIC_NAMES} | {"_model_name": "claude-haiku-4-5"}
+
+    run = run_eval(pairs, _retrieval, evaluator=fake_evaluator, model_name="all-MiniLM-L6-v2")
+    assert run.model_name == "claude-haiku-4-5"
