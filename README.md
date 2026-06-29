@@ -75,7 +75,7 @@ a measurable change, not a leap of faith.
   Q&A eval dataset (200 pairs)         Similarity search
          │                              (top-k retrieval)
          ▼                                      │
-  RAGAS eval harness ◄───────────────────────────┘
+  RAGAS eval harness ◄──────────────────────────┘
          │
          ├── llm.eval_results (per-question scores)
          ├── llm.cost_log     (token + cost tracking)
